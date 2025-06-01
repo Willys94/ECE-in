@@ -1,0 +1,61 @@
+
+$formations = file_exists('formations.xml') ? simplexml_load_file('formations.xml') : null;
+$formations_array = [];
+if ($formations) {
+    foreach ($formations->formation as $f) {
+        $formations_array[] = $f;
+    }
+    usort($formations_array, function($a, $b) {
+        return intval($b->annee_fin) - intval($a->annee_fin);
+    });
+}
+
+$projets = file_exists('projets.xml') ? simplexml_load_file('projets.xml') : null;
+$projets_array = [];
+if ($projets) {
+    foreach ($projets->projet as $p) {
+        $projets_array[] = $p;
+    }
+    usort($projets_array, function($a, $b) {
+        return intval($b->annee) - intval($a->annee);
+    });
+}
+
+// Génération du CV en HTML
+echo "<!DOCTYPE html>
+<html lang='fr'>
+<head>
+    <meta charset='UTF-8'>
+    <title>CV de $prenom $nom</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1 { color: #003366; }
+        h2 { color: #0055aa; }
+        ul { margin-bottom: 30px; }
+        li { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>CV de $prenom $nom</h1>
+    <p><strong>Email :</strong> $email</p>
+    <h2>Formations</h2>
+    <ul>";
+if ($formations_array) {
+    foreach ($formations_array as $formation) {
+        echo "<li><strong>{$formation->titre}</strong> à {$formation->ecole} ({$formation->annee_debut} - {$formation->annee_fin})<br>
+        <em>{$formation->description}</em></li>";
+    }
+}
+echo "</ul>
+    <h2>Projets</h2>
+    <ul>";
+if ($projets_array) {
+    foreach ($projets_array as $projet) {
+        echo "<li><strong>{$projet->titre}</strong> ({$projet->annee}, {$projet->lieu})<br>
+        <em>{$projet->description}</em></li>";
+    }
+}
+echo "</ul>
+</body>
+</html>";
+?>
