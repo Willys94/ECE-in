@@ -1,3 +1,8 @@
+<?php
+session_start();
+$prenom = isset($_SESSION['prenom']) ? $_SESSION['prenom'] : 'Prénom';
+$nom = isset($_SESSION['nom']) ? $_SESSION['nom'] : 'Nom';
+$email = isset($_SESSION['email']) ? $_SESSION['email'] : 'Email';
 
 $formations = file_exists('formations.xml') ? simplexml_load_file('formations.xml') : null;
 $formations_array = [];
