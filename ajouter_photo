@@ -1,0 +1,15 @@
+<?php
+session_start();
+$serveur = "localhost";
+$utilisateur = "root";
+$mot_de_passe = "";
+$nom_base = "ecein";
+$connexion = new mysqli($serveur, $utilisateur, $mot_de_passe, $nom_base);
+if ($connexion->connect_error) {
+    die("Connexion échouée : " . $connexion->connect_error);
+}
+$id_album = intval($_POST['id_album']);
+$id_publication = intval($_POST['id_publication']);
+$connexion->query("INSERT IGNORE INTO album_photo (id_album, id_publication) VALUES ($id_album, $id_publication)");
+header("Location: albums.php?id_album=$id_album");
+exit(); 
