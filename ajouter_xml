@@ -1,0 +1,36 @@
+<?php
+session_start();
+$type = $_POST['type'];
+
+if ($type === 'formation') {
+    $xml_file = 'formations.xml';
+    $root = 'formations';
+    $item = 'formation';
+    $fields = ['titre', 'ecole', 'annee_debut', 'annee_fin', 'description'];
+} else if ($type === 'projet') {
+    $xml_file = 'projets.xml';
+    $root = 'projets';
+    $item = 'projet';
+    $fields = ['titre', 'lieu', 'annee', 'description'];
+} else {
+    header('Location: profil.php');
+    exit();
+}
+
+// Charger ou créer le fichier XML
+if (file_exists($xml_file)) {
+    $xml = simplexml_load_file($xml_file);
+} else {
+    $xml = new SimpleXMLElement("<$root></$root>");
+}
+
+// Ajouter l'élément
+$new = $xml->addChild($item);
+foreach ($fields as $field) {
+    $new->addChild($field, htmlspecialchars($_POST[$field]));
+}
+
+// Sauvegarder
+$xml->asXML($xml_file);
+header('Location: profil.php');
+exit(); 
