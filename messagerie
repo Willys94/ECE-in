@@ -1,0 +1,307 @@
+<?php
+session_start();
+if (!isset($_SESSION['id_utilisateur'])) {
+    header("Location: connexion.php");
+    exit();
+}
+
+$serveur = "localhost";
+$utilisateur = "root";
+$mot_de_passe = "";
+$nom_base = "ecein";
+$connexion = new mysqli($serveur, $utilisateur, $mot_de_passe, $nom_base);
+if ($connexion->connect_error) {
+    die("Erreur de connexion : " . $connexion->connect_error);
+}
+
+$id_utilisateur = $_SESSION['id_utilisateur'];
+$message_info = "";
+
+// Création de groupe (depuis le formulaire en haut)
+if (isset($_POST['creer_groupe']) && isset($_POST['nom_groupe']) && isset($_POST['membres'])) {
+    $nom_groupe = $connexion->real_escape_string($_POST['nom_groupe']);
+    $connexion->query("INSERT INTO groupe (nom) VALUES ('$nom_groupe')");
+    $id_groupe = $connexion->insert_id;
+    $connexion->query("INSERT INTO groupe_membre (id_groupe, id_utilisateur) VALUES ($id_groupe, $id_utilisateur)");
+    foreach ($_POST['membres'] as $ami_id) {
+        $ami_id = intval($ami_id);
+        if ($ami_id != $id_utilisateur) {
+            $connexion->query("INSERT INTO groupe_membre (id_groupe, id_utilisateur) VALUES ($id_groupe, $ami_id)");
+        }
+    }
+    header("Location: messagerie.php?id_groupe=$id_groupe");
+    exit();
+}
+
+// Envoi d'un message privé
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message']) && isset($_POST['destinataire_id'])) {
+    $texte = $connexion->real_escape_string($_POST['message']);
+    $destinataire_id = intval($_POST['destinataire_id']);
+    $connexion->query("INSERT INTO message (expediteur_id, destinataire_id, contenu, date_envoi) VALUES ($id_utilisateur, $destinataire_id, '$texte', NOW())");
+    $message_info = "Message envoyé.";
+    header("Location: messagerie.php?conversation=$destinataire_id");
+    exit();
+}
+
+// Envoi d'un message de groupe
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message_groupe']) && isset($_POST['id_groupe'])) {
+    $id_groupe = intval($_POST['id_groupe']);
+    $texte = $connexion->real_escape_string($_POST['message_groupe']);
+    $connexion->query("INSERT INTO message_groupe (id_groupe, id_utilisateur, contenu, date_envoi) VALUES ($id_groupe, $id_utilisateur, '$texte', NOW())");
+    $message_info = "Message envoyé au groupe.";
+    header("Location: messagerie.php?id_groupe=$id_groupe");
+    exit();
+}
+
+// Liste des amis (conversations privées)
+$connexions = $connexion->query("SELECT u.id_utilisateur, u.prenom, u.nom, u.photo_profil FROM utilisateur u WHERE u.id_utilisateur IN (
+    SELECT id_utilisateur_source FROM connexion WHERE id_utilisateur_cible = $id_utilisateur AND statut = 'accepte'
+    UNION
+    SELECT id_utilisateur_cible FROM connexion WHERE id_utilisateur_source = $id_utilisateur AND statut = 'accepte'
+)");
+
+// Liste des groupes
+$groupes = $connexion->query("SELECT g.* FROM groupe g JOIN groupe_membre gm ON g.id_groupe = gm.id_groupe WHERE gm.id_utilisateur = $id_utilisateur ORDER BY g.date_creation DESC");
+
+// Liste des amis pour création de groupe
+$amis = $connexion->query("SELECT u.id_utilisateur, u.prenom, u.nom FROM utilisateur u WHERE u.id_utilisateur IN (
+    SELECT id_utilisateur_source FROM connexion WHERE id_utilisateur_cible = $id_utilisateur AND statut = 'accepte'
+    UNION
+    SELECT id_utilisateur_cible FROM connexion WHERE id_utilisateur_source = $id_utilisateur AND statut = 'accepte'
+)");
+
+// Historique conversation privée
+$historique = [];
+$destinataire_id = isset($_GET['conversation']) ? intval($_GET['conversation']) : null;
+if ($destinataire_id) {
+    $query = "SELECT m.*, u.photo_profil FROM message m JOIN utilisateur u ON m.expediteur_id = u.id_utilisateur WHERE (expediteur_id = $id_utilisateur AND destinataire_id = $destinataire_id) OR (expediteur_id = $destinataire_id AND destinataire_id = $id_utilisateur) ORDER BY date_envoi ASC";
+    $result = $connexion->query($query);
+    while ($ligne = $result->fetch_assoc()) {
+        $historique[] = $ligne;
+    }
+}
+
+// Historique conversation de groupe
+$messages_groupe = [];
+$groupe_info = null;
+$groupe_membres = [];
+$id_groupe = isset($_GET['id_groupe']) ? intval($_GET['id_groupe']) : null;
+if ($id_groupe) {
+    $groupe_info = $connexion->query("SELECT * FROM groupe WHERE id_groupe = $id_groupe")->fetch_assoc();
+    $result = $connexion->query("SELECT m.*, u.prenom, u.nom FROM message_groupe m JOIN utilisateur u ON m.id_utilisateur = u.id_utilisateur WHERE m.id_groupe = $id_groupe ORDER BY m.date_envoi ASC");
+    while ($ligne = $result->fetch_assoc()) {
+        $messages_groupe[] = $ligne;
+    }
+    // Liste des membres du groupe
+    $membres_result = $connexion->query("SELECT u.id_utilisateur, u.prenom, u.nom FROM groupe_membre gm JOIN utilisateur u ON gm.id_utilisateur = u.id_utilisateur WHERE gm.id_groupe = $id_groupe");
+    while ($m = $membres_result->fetch_assoc()) {
+        $groupe_membres[] = $m;
+    }
+}
+
+// Ajout pour récupérer les infos du destinataire si conversation privée
+$dest_info = null;
+if (isset($_GET['conversation'])) {
+    $dest_id = intval($_GET['conversation']);
+    $dest_result = $connexion->query("SELECT prenom, nom FROM utilisateur WHERE id_utilisateur = $dest_id");
+    $dest_info = $dest_result ? $dest_result->fetch_assoc() : null;
+}
+
+function formatDateHeure($datetime) {
+    return date("d/m/Y à H:i", strtotime($datetime));
+}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Messagerie - ECE In</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .bulle-message { max-width: 70%; padding: 10px; border-radius: 15px; margin-bottom: 10px; }
+        .moi { background-color: #d1e7dd; align-self: flex-end; margin-left: auto; }
+        .lui { background-color: #f8d7da; align-self: flex-start; }
+        .groupe-form { background: #f9f9f9; border: 1px solid #bbb; padding: 15px; margin-bottom: 20px; border-radius: 8px; max-width: 400px; }
+    </style>
+    <script>
+    function toggleGroupeForm() {
+        var f = document.getElementById('groupeForm');
+        f.style.display = (f.style.display === 'none' || f.style.display === '') ? 'block' : 'none';
+    }
+    </script>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#"><strong>ECE In</strong></a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="accueil.php">Accueil</a></li>
+                    <li class="nav-item"><a class="nav-link" href="reseau.php">Mon Réseau</a></li>
+                    <li class="nav-item"><a class="nav-link" href="profil.php">Vous</a></li>
+                    <li class="nav-item"><a class="nav-link" href="notifications.php">Notifications</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="messagerie.php">Messagerie</a></li>
+                    <li class="nav-item"><a class="nav-link" href="emplois.php">Emplois</a></li>
+                    <li class="nav-item"><a class="nav-link" href="deconnexion.php">Déconnexion</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <!-- Liste des conversations -->
+            <div class="col-lg-4 mb-4">
+                <div class="card">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h2 class="h4 mb-0">Conversations</h2>
+                        <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#nouvelleConversationModal">
+                            <i class="fas fa-plus me-1"></i>Nouvelle
+                        </button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <?php while ($conv = $connexions->fetch_assoc()): ?>
+                                <a href="?conversation=<?php echo $conv['id_utilisateur']; ?>" 
+                                   class="list-group-item list-group-item-action <?php echo isset($_GET['conversation']) && $_GET['conversation'] == $conv['id_utilisateur'] ? 'active' : ''; ?>">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="mb-1"><?php echo htmlspecialchars($conv['prenom'] . ' ' . $conv['nom']); ?></h6>
+                                            <small class="text-muted">
+                                                <?php echo $conv['photo_profil'] ? 'Photo' : 'Aucun message'; ?>
+                                            </small>
+                                        </div>
+                                        <small class="text-muted">
+                                            <?php echo $conv['photo_profil'] ? date("d/m H:i", strtotime($conv['photo_profil'])) : ''; ?>
+                                        </small>
+                                    </div>
+                                </a>
+                            <?php endwhile; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Zone de chat -->
+            <div class="col-lg-8">
+                <?php if (isset($_GET['conversation'])): ?>
+                    <div class="card">
+                        <div class="card-header bg-primary text-white">
+                            <h2 class="h4 mb-0"><?php echo $dest_info ? htmlspecialchars($dest_info['prenom'] . ' ' . $dest_info['nom']) : 'Conversation'; ?></h2>
+                        </div>
+                        <div class="card-body">
+                            <!-- Bouton Jitsi Visio -->
+                            <a href="https://meet.jit.si/ecein_<?php echo $id_utilisateur . '_' . $destinataire_id; ?>" target="_blank" class="btn btn-outline-success mb-3">
+                                <i class="fas fa-video"></i> Lancer une visio
+                            </a>
+                            <!-- Messages -->
+                            <div class="chat-messages mb-4" style="height: 400px; overflow-y: auto;">
+                                <?php foreach ($historique as $message): ?>
+                                    <div class="message <?php echo $message['expediteur_id'] == $id_utilisateur ? 'text-end' : ''; ?> mb-3">
+                                        <div class="d-inline-block p-3 rounded <?php echo $message['expediteur_id'] == $id_utilisateur ? 'bg-primary text-white' : 'bg-light'; ?>" style="max-width: 70%;">
+                                            <p class="mb-1"><?php echo nl2br(htmlspecialchars($message['contenu'])); ?></p>
+                                            <?php
+                                            // Détection et affichage du média partagé
+                                            if (preg_match('/\(Média : ([^)]+)\)/', $message['contenu'], $matches)) {
+                                                $media = trim($matches[1]);
+                                                if (preg_match('/\.(jpg|jpeg|png|gif)$/i', $media)) {
+                                                    echo '<img src="' . htmlspecialchars($media) . '" alt="media" class="img-fluid rounded mt-2" style="max-width:200px; max-height:200px; object-fit:contain;">';
+                                                } elseif (preg_match('/\.(mp4|webm|ogg)$/i', $media)) {
+                                                    echo '<video controls class="img-fluid rounded mt-2" style="max-width:200px; max-height:200px; object-fit:contain;"><source src="' . htmlspecialchars($media) . '"></video>';
+                                                }
+                                            }
+                                            ?>
+                                            <small class="<?php echo $message['expediteur_id'] == $id_utilisateur ? 'text-white-50' : 'text-muted'; ?>">
+                                                <?php echo date("d/m H:i", strtotime($message['date_envoi'])); ?>
+                                            </small>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+
+                            <!-- Formulaire d'envoi -->
+                            <form method="POST" action="messagerie.php?conversation=<?php echo $_GET['conversation']; ?>" class="mt-3">
+                                <input type="hidden" name="destinataire_id" value="<?php echo $_GET['conversation']; ?>">
+                                <div class="input-group">
+                                    <textarea name="message" class="form-control" placeholder="Votre message..." required></textarea>
+                                    <button type="submit" name="envoyer_message" class="btn btn-primary">
+                                        <i class="fas fa-paper-plane"></i>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <div class="card">
+                        <div class="card-body text-center py-5">
+                            <i class="fas fa-comments fa-3x text-muted mb-3"></i>
+                            <h3 class="h5 text-muted">Sélectionnez une conversation pour commencer à discuter</h3>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Nouvelle Conversation -->
+    <div class="modal fade" id="nouvelleConversationModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Nouvelle conversation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form method="POST" action="messagerie.php">
+                        <div class="mb-3">
+                            <label class="form-label">Type de conversation</label>
+                            <select name="type_conversation" class="form-select" required>
+                                <option value="privee">Conversation privée</option>
+                                <option value="groupe">Groupe</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Nom du groupe</label>
+                            <input type="text" name="nom_groupe" class="form-control" placeholder="Nom du groupe (si groupe)">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Participants</label>
+                            <select name="participants[]" class="form-select" multiple required>
+                                <?php while ($contact = $amis->fetch_assoc()): ?>
+                                    <option value="<?php echo $contact['id_utilisateur']; ?>">
+                                        <?php echo htmlspecialchars($contact['prenom'] . ' ' . $contact['nom']); ?>
+                                    </option>
+                                <?php endwhile; ?>
+                            </select>
+                        </div>
+                        <button type="submit" name="creer_conversation" class="btn btn-primary">Créer</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-dark text-light py-4 mt-4">
+        <div class="container">
+            <p class="text-center mb-0">&copy; 2025 ECE In - Tous droits réservés</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // Scroll automatique vers le dernier message
+    document.addEventListener('DOMContentLoaded', function() {
+        const chatMessages = document.querySelector('.chat-messages');
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    });
+    </script>
+</body>
+</html>
