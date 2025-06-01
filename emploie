@@ -1,0 +1,290 @@
+<?php
+session_start();
+if (!isset($_SESSION['id_utilisateur'])) {
+    header("Location: connexion.php");
+    exit();
+}
+
+$serveur = "localhost";
+$utilisateur = "root";
+$mot_de_passe = "";
+$nom_base = "ecein";
+
+$connexion = new mysqli($serveur, $utilisateur, $mot_de_passe, $nom_base);
+if ($connexion->connect_error) {
+    die("Erreur de connexion : " . $connexion->connect_error);
+}
+
+$id_utilisateur = $_SESSION['id_utilisateur'];
+$message = "";
+
+// Suppression d'un emploi (admin uniquement)
+if (isset($_POST['supprimer_emploi']) && isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+    $id_emploi = intval($_POST['supprimer_emploi']);
+    $connexion->query("DELETE FROM emploi WHERE id_emploi = $id_emploi");
+    $message = "Offre supprimée.";
+}
+
+// Ajout d'un emploi (admin uniquement)
+if (isset($_POST['ajouter_emploi']) && isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+    $titre = $connexion->real_escape_string($_POST['titre']);
+    $description = $connexion->real_escape_string($_POST['description']);
+    $entreprise = $connexion->real_escape_string($_POST['entreprise']);
+    $lieu = $connexion->real_escape_string($_POST['lieu']);
+    $date_publication = date('Y-m-d');
+    $publie_par = $id_utilisateur;
+    $connexion->query("INSERT INTO emploi (titre, description, entreprise, lieu, date_publication, publie_par) VALUES ('$titre', '$description', '$entreprise', '$lieu', '$date_publication', $publie_par)");
+    $message = "Offre ajoutée.";
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_emploi']) && (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin')) {
+    $id_emploi = intval($_POST['id_emploi']);
+    $verif = $connexion->query("SELECT * FROM candidature WHERE id_utilisateur = $id_utilisateur AND id_emploi = $id_emploi");
+    if ($verif->num_rows === 0) {
+        $connexion->query("INSERT INTO candidature (id_utilisateur, id_emploi, date_candidature) VALUES ($id_utilisateur, $id_emploi, NOW())");
+        $message = "Candidature envoyée.";
+    } else {
+        $message = "Vous avez déjà postulé à cette offre.";
+    }
+}
+
+// Traitement des candidatures par l'admin
+if (isset($_POST['action_candidature']) && isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+    $id_utilisateur_candidat = intval($_POST['id_utilisateur_candidat']);
+    $id_emploi_candidat = intval($_POST['id_emploi_candidat']);
+    $action = $_POST['action_candidature'];
+    if ($action === 'accepter') {
+        $connexion->query("UPDATE candidature SET statut = 'accepte' WHERE id_utilisateur = $id_utilisateur_candidat AND id_emploi = $id_emploi_candidat");
+        $message = "Candidature acceptée.";
+    } elseif ($action === 'refuser') {
+        $connexion->query("UPDATE candidature SET statut = 'refuse' WHERE id_utilisateur = $id_utilisateur_candidat AND id_emploi = $id_emploi_candidat");
+        $message = "Candidature refusée.";
+    }
+}
+
+$emplois = $connexion->query("SELECT * FROM emploi ORDER BY date_publication DESC");
+$mes_candidatures = $connexion->query("SELECT e.titre, e.entreprise, e.lieu, c.date_candidature, c.id_utilisateur, c.id_emploi, c.statut FROM candidature c JOIN emploi e ON c.id_emploi = e.id_emploi WHERE c.id_utilisateur = $id_utilisateur ORDER BY c.date_candidature DESC");
+
+// Pour l'admin : voir toutes les candidatures
+if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+    $toutes_candidatures = $connexion->query("SELECT c.*, u.prenom, u.nom, e.titre FROM candidature c JOIN utilisateur u ON c.id_utilisateur = u.id_utilisateur JOIN emploi e ON c.id_emploi = e.id_emploi ORDER BY c.date_candidature DESC");
+}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Offres d'emploi - ECE In</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#"><strong>ECE In</strong></a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="accueil.php">Accueil</a></li>
+                    <li class="nav-item"><a class="nav-link" href="reseau.php">Mon Réseau</a></li>
+                    <li class="nav-item"><a class="nav-link" href="profil.php">Vous</a></li>
+                    <li class="nav-item"><a class="nav-link" href="notifications.php">Notifications</a></li>
+                    <li class="nav-item"><a class="nav-link" href="messagerie.php">Messagerie</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="emplois.php">Emplois</a></li>
+                    <li class="nav-item"><a class="nav-link" href="deconnexion.php">Déconnexion</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <?php if (!empty($message)): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <?php echo $message; ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
+
+        <div class="row">
+            <!-- Colonne gauche : Offres d'emploi -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h2 class="card-title h4 mb-4">Les dernières offres</h2>
+
+                        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+                        <!-- Formulaire d'ajout d'emploi (admin uniquement) -->
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h3 class="h5 mb-3">Ajouter une offre d'emploi</h3>
+                                <form method="POST" action="emplois.php" class="needs-validation" novalidate>
+                                    <div class="mb-3">
+                                        <input type="text" name="titre" class="form-control" placeholder="Titre du poste" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <input type="text" name="entreprise" class="form-control" placeholder="Entreprise" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <input type="text" name="lieu" class="form-control" placeholder="Lieu" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <textarea name="description" class="form-control" placeholder="Description du poste" rows="4" required></textarea>
+                                    </div>
+                                    <button type="submit" name="ajouter_emploi" class="btn btn-primary">Ajouter l'offre</button>
+                                </form>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php while ($offre = $emplois->fetch_assoc()): ?>
+                            <div class="card mb-3">
+                                <div class="card-body">
+                                    <h3 class="h5 mb-3"><?php echo htmlspecialchars($offre['titre']); ?></h3>
+                                    <div class="mb-2">
+                                        <i class="fas fa-building text-primary me-2"></i>
+                                        <strong>Entreprise :</strong> <?php echo htmlspecialchars($offre['entreprise']); ?>
+                                    </div>
+                                    <div class="mb-2">
+                                        <i class="fas fa-map-marker-alt text-primary me-2"></i>
+                                        <strong>Lieu :</strong> <?php echo htmlspecialchars($offre['lieu']); ?>
+                                    </div>
+                                    <div class="mb-3">
+                                        <i class="fas fa-align-left text-primary me-2"></i>
+                                        <strong>Description :</strong>
+                                        <p class="mt-2"><?php echo nl2br(htmlspecialchars($offre['description'])); ?></p>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <small class="text-muted">
+                                            <i class="fas fa-calendar-alt me-1"></i>
+                                            Publié le <?php echo date("d/m/Y", strtotime($offre['date_publication'])); ?>
+                                        </small>
+                                        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+                                            <form method="POST" action="emplois.php" onsubmit="return confirm('Supprimer cette offre ?');" class="d-inline">
+                                                <input type="hidden" name="supprimer_emploi" value="<?php echo $offre['id_emploi']; ?>">
+                                                <button type="submit" class="btn btn-danger btn-sm">
+                                                    <i class="fas fa-trash-alt me-1"></i>Supprimer
+                                                </button>
+                                            </form>
+                                        <?php else: ?>
+                                            <form method="POST" action="emplois.php">
+                                                <input type="hidden" name="id_emploi" value="<?php echo $offre['id_emploi']; ?>">
+                                                <button type="submit" class="btn btn-primary btn-sm">
+                                                    <i class="fas fa-paper-plane me-1"></i>Postuler
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endwhile; ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Colonne droite : Candidatures -->
+            <div class="col-lg-4">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h2 class="card-title h4 mb-4">Mes candidatures</h2>
+                        <?php $mes_candidatures->data_seek(0); while ($candidature = $mes_candidatures->fetch_assoc()): ?>
+                            <div class="card mb-3 border-start border-primary border-4">
+                                <div class="card-body">
+                                    <h5 class="card-title h6 mb-2"><?php echo htmlspecialchars($candidature['titre']); ?></h5>
+                                    <p class="card-text mb-2">
+                                        <small class="text-muted">
+                                            <i class="fas fa-building me-1"></i><?php echo htmlspecialchars($candidature['entreprise']); ?><br>
+                                            <i class="fas fa-map-marker-alt me-1"></i><?php echo htmlspecialchars($candidature['lieu']); ?>
+                                        </small>
+                                    </p>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <small class="text-muted">
+                                            <i class="fas fa-calendar-alt me-1"></i>
+                                            <?php echo date("d/m/Y", strtotime($candidature['date_candidature'])); ?>
+                                        </small>
+                                        <?php if (isset($candidature['statut'])): ?>
+                                            <span class="badge bg-<?php echo $candidature['statut'] === 'accepte' ? 'success' : ($candidature['statut'] === 'refuse' ? 'danger' : 'warning'); ?>">
+                                                <?php echo ucfirst($candidature['statut']); ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endwhile; ?>
+                    </div>
+                </div>
+
+                <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+                    <div class="card">
+                        <div class="card-body">
+                            <h2 class="card-title h4 mb-4">Toutes les candidatures</h2>
+                            <?php while ($cand = $toutes_candidatures->fetch_assoc()): ?>
+                                <div class="card mb-3 border-start border-primary border-4">
+                                    <div class="card-body">
+                                        <h5 class="card-title h6 mb-2">
+                                            <?php echo htmlspecialchars($cand['prenom'] . ' ' . $cand['nom']); ?>
+                                        </h5>
+                                        <p class="card-text mb-2">
+                                            <small class="text-muted">
+                                                <i class="fas fa-briefcase me-1"></i><?php echo htmlspecialchars($cand['titre']); ?>
+                                            </small>
+                                        </p>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <small class="text-muted">
+                                                <i class="fas fa-calendar-alt me-1"></i>
+                                                <?php echo date("d/m/Y", strtotime($cand['date_candidature'])); ?>
+                                            </small>
+                                            <span class="badge bg-<?php echo $cand['statut'] === 'accepte' ? 'success' : ($cand['statut'] === 'refuse' ? 'danger' : 'warning'); ?>">
+                                                <?php echo ucfirst($cand['statut']); ?>
+                                            </span>
+                                        </div>
+                                        <div class="mt-3">
+                                            <form method="POST" action="emplois.php" class="d-inline">
+                                                <input type="hidden" name="id_utilisateur_candidat" value="<?php echo $cand['id_utilisateur']; ?>">
+                                                <input type="hidden" name="id_emploi_candidat" value="<?php echo $cand['id_emploi']; ?>">
+                                                <button type="submit" name="action_candidature" value="accepter" class="btn btn-success btn-sm me-1">
+                                                    <i class="fas fa-check me-1"></i>Accepter
+                                                </button>
+                                                <button type="submit" name="action_candidature" value="refuser" class="btn btn-danger btn-sm">
+                                                    <i class="fas fa-times me-1"></i>Refuser
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endwhile; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-dark text-light py-4 mt-4">
+        <div class="container">
+            <p class="text-center mb-0">&copy; 2025 ECE In - Tous droits réservés</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // Validation des formulaires Bootstrap
+    (function () {
+        'use strict'
+        var forms = document.querySelectorAll('.needs-validation')
+        Array.prototype.slice.call(forms).forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                if (!form.checkValidity()) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                }
+                form.classList.add('was-validated')
+            }, false)
+        })
+    })()
+    </script>
+</body>
+</html>
